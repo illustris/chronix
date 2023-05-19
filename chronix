@@ -1,0 +1,85 @@
+#!/bin/sh
+set -e
+
+# Initialize variables for optional flags
+kafka_brokers=""
+topic=""
+prom=""
+
+# Parse command-line arguments
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+	--kafka-brokers|-b)
+	    kafka_brokers="$2"
+	    shift 2
+	    ;;
+	--topic|-t)
+	    topic="$2"
+	    shift 2
+	    ;;
+	--prom)
+	    prom=true
+	    shift
+	    ;;
+	*)
+	    echo "Unknown option: $1" >&2
+	    exit 1
+    esac
+done
+
+# Check if both or neither kafka_brokers and topic are set
+if [ -z "$kafka_brokers" -a -z "$topic" ] || [ -n "$kafka_brokers" -a -n "$topic" ]; then
+    : # Do nothing, this is the desired situation
+elif [ -z "$kafka_brokers" ]; then
+    echo "Error: Kafka brokers not specified." >&2
+    exit 1
+elif [ -z "$topic" ]; then
+    echo "Error: Topic not specified." >&2
+    exit 1
+fi
+
+# gather system information
+hostname=$(hostname)
+nixos_config=$(readlink -f /run/current-system)
+nixos_nextboot_config=$(readlink -f /nix/var/nix/profiles/system)
+
+# construct JSON output
+json_output=$(jq -n \
+                 --arg nc "$nixos_config" \
+		 --arg nbc "$nixos_nextboot_config" \
+                 --arg hn "$hostname" \
+                 --arg nr "$release" \
+		 --arg cn "$codeName" \
+                 '{nixosConfig: $nc, nextBootConfig: $nbc, hostname: $hn, release_version: $nr, release_codename: $cn}')
+
+# If kafka_brokers and topic are set, push to Kafka
+if [ -n "$kafka_brokers" -a -n "$topic" ]; then
+    if [ -f /run/chronix/kafka_persist ]; then
+	mv /run/chronix/kafka_persist{,.old}
+	# print JSON to stdout and persist to /run
+	echo $json_output > /run/chronix/kafka_persist
+	if diff /run/chronix/kafka_persist{.old,}; then
+	    echo "No change in config detected"
+	    exit 0
+	else
+	    echo "Config change detected"
+	    oldNixosConfig=$(jq -r '.nixosConfig' /run/chronix/kafka_persist)
+	    oldBootConfig=$(jq -r '.nextBootConfig' /run/chronix/kafka_persist)
+	    json_output_kafka=$(echo $json_output | jq --arg oldBootConfig "$oldBootConfig" \
+						       --arg oldNixosConfig "$oldNixosConfig" '. + {oldNixosConfig: $oldNixosConfig, oldBootConfig: $oldBootConfig, type: "change"}')
+	fi
+    else
+	echo "Failed to find previos state, must be a new boot"
+	echo $json_output > /run/chronix/kafka_persist
+	json_output_kafka=$(echo $json_output | jq '. + {type: "init"}')
+    fi
+    # push to kafka
+    echo $json_output_kafka | kcat -b "$kafka_brokers" -t "$topic"
+fi
+
+# If prom flag is set, create a textfile for Prometheus
+if [ "$prom" = true ]; then
+    echo "# HELP node_nixos_info Node's NixOS information." > /run/chronix/node_nixos_info.prom
+    echo "# TYPE node_nixos_info gauge" >> /run/chronix/node_nixos_info.prom
+    echo "node_nixos_info{nixosConfig=\"$nixos_config\", nextBootConfig=\"$nixos_nextboot_config\", hostname=\"$hostname\", release_version=\"$release\", release_codename=\"$codeName\"} 1" >> /run/chronix/node_nixos_info.prom
+fi
