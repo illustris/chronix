@@ -74,7 +74,7 @@ if [ -n "$kafka_brokers" -a -n "$topic" ]; then
 	json_output_kafka=$(echo $json_output | jq '. + {type: "init"}')
     fi
     # push to kafka
-    echo $json_output_kafka | kcat -b "$kafka_brokers" -t "$topic"
+    echo $json_output_kafka | jq '. + {timestamp: now|tostring}' | kcat -b "$kafka_brokers" -t "$topic"
 fi
 
 # If prom flag is set, create a textfile for Prometheus
