@@ -15,7 +15,6 @@
 
 		nixosModules.chronix = { config, pkgs, lib, ... }: with lib; {
 			options.services.chronix = {
-				enable = mkEnableOption "ChroNix service";
 				kafka = {
 					enable = mkEnableOption "chronix kafka producer";
 					brokers = mkOption {
@@ -30,9 +29,11 @@
 
 			config = let
 				cfg = config.services.chronix;
-			in mkIf cfg.enable {
-				services.prometheus.exporters.node.extraFlags = [ "--collector.textfile.directory=/run/chronix" ];
-				systemd = {
+			in {
+				services.prometheus.exporters.node.extraFlags = mkIf cfg.prometheus.enable [
+					"--collector.textfile.directory=/run/chronix"
+				];
+				systemd = mkIf (cfg.kafka.enable || cfg.prometheus.enable) {
 					services.chronix = {
 						wantedBy = [ "multi-user.target" ];
 						after = [ "network.target" "systemd-tmpfiles-setup.service" ];
