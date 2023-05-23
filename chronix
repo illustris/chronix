@@ -43,6 +43,13 @@ hostname=$(hostname)
 nixos_config=$(readlink -f /run/current-system)
 nixos_nextboot_config=$(readlink -f /nix/var/nix/profiles/system)
 
+# If prom flag is set, create a textfile for Prometheus
+if [ "$prom" = true ]; then
+    echo "# HELP node_nixos_info Node's NixOS information." > /run/chronix/node_nixos_info.prom
+    echo "# TYPE node_nixos_info gauge" >> /run/chronix/node_nixos_info.prom
+    echo "node_nixos_info{nixosConfig=\"$nixos_config\", nextBootConfig=\"$nixos_nextboot_config\", hostname=\"$hostname\", release_version=\"$release\", release_codename=\"$codeName\"} 1" >> /run/chronix/node_nixos_info.prom
+fi
+
 # construct JSON output
 json_output=$(jq -n \
                  --arg nc "$nixos_config" \
@@ -75,11 +82,4 @@ if [ -n "$kafka_brokers" -a -n "$topic" ]; then
     fi
     # push to kafka
     echo $json_output_kafka | jq '. + {timestamp: now|tostring}' | kcat -b "$kafka_brokers" -t "$topic"
-fi
-
-# If prom flag is set, create a textfile for Prometheus
-if [ "$prom" = true ]; then
-    echo "# HELP node_nixos_info Node's NixOS information." > /run/chronix/node_nixos_info.prom
-    echo "# TYPE node_nixos_info gauge" >> /run/chronix/node_nixos_info.prom
-    echo "node_nixos_info{nixosConfig=\"$nixos_config\", nextBootConfig=\"$nixos_nextboot_config\", hostname=\"$hostname\", release_version=\"$release\", release_codename=\"$codeName\"} 1" >> /run/chronix/node_nixos_info.prom
 fi
