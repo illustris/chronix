@@ -33,13 +33,14 @@
 				services.prometheus.exporters.node.extraFlags = mkIf cfg.prometheus.enable [
 					"--collector.textfile.directory=/run/chronix"
 				];
+
 				systemd = mkIf (cfg.kafka.enable || cfg.prometheus.enable) {
 					services.chronix = {
 						wantedBy = [ "multi-user.target" ];
-						after = [ "network.target" "systemd-tmpfiles-setup.service" ];
+						after = [ "network.target" ];
 						path = with pkgs; [
 							self.packages.${pkgs.system}.chronix
-							nettools jq diffutils
+							nettools jq diffutils inotify-tools
 						] ++ (optionals (cfg.kafka.enable) [
 							kcat
 						]);
@@ -52,7 +53,8 @@
 							(optionalString cfg.prometheus.enable "--prom")
 						];
 						serviceConfig = {
-							Type = "oneshot";
+							Type = "simple";
+							Restart = "on-failure";
 						};
 					};
 					tmpfiles.rules = [
